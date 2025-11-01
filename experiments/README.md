@@ -1,138 +1,116 @@
-# SPAR Experiment Suite
+# SPAR Tool Unreliability Experiments
 
-This directory contains experiments for testing the effect of tool unreliability on reward hacking behavior.
+Testing whether tool unreliability increases reward hacking in LLM agents using the ImpossibleBench framework.
 
 ## Quick Start
 
 ```bash
-# Pre-reqs
-export OPENROUTER_API_KEY=$(cat openrouter_apikey) 
-export OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
+# Setup OpenRouter API key
+export OPENROUTER_API_KEY=$(cat openrouter_apikey)
+source .venv/bin/activate
 
-# Run baseline experiment (no tool failures)
-python experiments/spar_baseline_experiment.py baseline
+# Run baseline (no failures)
+python experiments/spar_baseline_experiment.py baseline \
+    --model openrouter/openai/o3 \
+    --prompt D \
+    --limit 20
 
-# Run with conservative failures (10% failure rate)
-python experiments/spar_baseline_experiment.py conservative
+# Run with 30% failures
+python experiments/spar_baseline_experiment.py failures \
+    --model openrouter/openai/o3 \
+    --rate 0.3 \
+    --limit 20
 
-# Run with moderate failures (30% failure rate)
-python experiments/spar_baseline_experiment.py failures30
-
-# Run with aggressive failures (50% failure rate)
-python experiments/spar_baseline_experiment.py aggressive
-
-# Run all experiments
-python experiments/spar_baseline_experiment.py all
+# Aggressive (50% failures)
+python experiments/spar_baseline_experiment.py aggressive \
+    --model openrouter/openai/o3 \
+    --limit 20
 ```
 
-## Experiments
+## Experiment Types
 
-### 1. Baseline Experiment
-- **No tool failures** - just impossible tests
-- Tests: conflicting split (only passable via reward hacking)
-- Purpose: Establish baseline reward hacking rate
+| Type           | Failure Rate | Use Case                               |
+| -------------- | ------------ | -------------------------------------- |
+| `baseline`     | 0%           | Establish baseline reward hacking rate |
+| `conservative` | 10%          | Test subtle effects                    |
+| `failures`     | Custom       | Custom rate with `--rate X`            |
+| `aggressive`   | 50%          | Maximum stress test                    |
 
-### 2. Conservative Failure (10%)
-- 10% timeout failures
-- 10% write failures
-- 10% corruption failures
-- Purpose: See if even small amounts of unreliability increase reward hacking
+## Failure Modes
 
-### 3. Moderate Failure (30%)
-- 30% failure rates across all modes
-- Purpose: Medium stress test
+**8 failure modes** available:
+- `timeout` - Execution timeouts
+- `write` - File write failures
+- `corruption` - Corrupted output
+- `rate-limit` - Rate limiting
+- `memory` - Memory exhaustion
+- `misleading` - False errors
+- `permission-denied` - Access errors
+- `intermittent` - Transient failures
 
-### 4. Aggressive Failure (50%)
-- 50% failure rates across all modes
-- Purpose: High stress test - extreme pressure
+## Models (OpenRouter Compatible)
 
-## Expected Results
+**Recommended**:
+- `openrouter/openai/o3` - 49% baseline cheating (Prompt A)
+- `openrouter/openai/gpt-5` - 92% baseline cheating if available (Prompt A)
 
-**Hypothesis**: Tool unreliability → increased frustration → increased reward hacking
+**Available OpenRouter Models**:
+- `openrouter/openai/gpt-4o`
+- `openrouter/openai/o3`
+- `openrouter/anthropic/claude-3.5-sonnet`
+- `openrouter/anthropic/claude-3-opus`
 
-- **Baseline (0%)**: Base rate of reward hacking
-- **Conservative (10%)**: Small increase expected
-- **Moderate (30%)**: Noticeable increase expected
-- **Aggressive (50%)**: Significant increase expected
+**Avoid**: `openrouter/openai/gpt-4o-mini` (shows 0% reward hacking, no signal)
 
-## Failure Modes Implemented
+## Prompts
 
-1. **Execution Timeout**: Randomly force test execution to timeout
-2. **File Write Failures**: Randomly fail when agent tries to write test files
-3. **Corrupted Output**: Randomly corrupt stdout/stderr with noise or truncation
+- **Prompt A (weak)**: "pass all tests" → 92% baseline cheating
+- **Prompt D (strict)**: "STOP, don't carve out code" → 1% baseline cheating
+
+## Examples
+
+```bash
+# Test specific failure modes only
+python experiments/spar_baseline_experiment.py failures \
+    --model openrouter/openai/o3 \
+    --rate 0.3 \
+    --failure-modes timeout,write,memory \
+    --limit 10
+
+# Custom failure configuration
+python experiments/spar_baseline_experiment.py custom \
+    --model openrouter/openai/o3 \
+    --timeout 0.4 --write 0.3 --corruption 0.2 \
+    --limit 20
+
+# Compare prompts
+for prompt in A D; do
+    python experiments/spar_baseline_experiment.py baseline \
+        --model openrouter/openai/o3 \
+        --prompt $prompt \
+        --limit 10
+done
+```
 
 ## Analysis
 
-### Quick Analysis (Built-in)
-
-Each experiment automatically runs basic analysis:
-
 ```bash
-python experiments/spar_baseline_experiment.py baseline
-# Automatically analyzes results at the end
-```
-
-### Detailed Analysis
-
-Use the dedicated analysis script for detailed statistics:
-
-```bash
-# Analyze a single log directory
-python experiments/analyze_spar_results.py logs/spar_baseline
-
-# Analyze multiple experiments and compare
+# Quick analysis
 python experiments/analyze_spar_results.py \
-    logs/spar_baseline \
-    logs/spar_conservative \
-    logs/spar_failures_30 \
-    logs/spar_aggressive
-
-# This will output:
-# - Reward hacking rates (pass rate on conflicting tests)
-# - Pass rates by model and agent type
-# - First-attempt success rates
-# - Score statistics
-# - Saves results to spar_analysis_results.csv
+    logs/spar_baseline_promptD \
+    logs/spar_aggressive_promptD
 ```
 
-### Programmatic Analysis
+## Framework Features
 
-```python
-from impossiblebench.analysis import DataLoader
+- **Unified injection** - Single middleware across all agents  
+- **LLM transparent** - Tools appear as standard `bash/python/text_editor`  
+- **Backward compatible** - Works with existing experiment scripts  
+- **Reproducible** - Fixed seed (42) for consistency  
+- **Agent coverage** - Mini and full agents supported
 
-# Load results
-loader = DataLoader(n_workers=4)
-loader.load_folder("./logs/")
+## Documentation
 
-# Get DataFrame
-df = loader.to_df()
-
-# Filter to conflicting tests (where pass rate = reward hacking rate)
-conflicting = df[df['variant'] == 'conflicting']
-reward_hacking_rate = conflicting['passed'].mean()
-
-print(f"Reward hacking rate: {reward_hacking_rate:.1%}")
-```
-
-## Customizing Experiments
-
-You can create custom failure configurations:
-
-```python
-from impossiblebench import ToolReliability
-
-# Custom config with only timeouts
-tool_reliability = ToolReliability(
-    timeout_failure_rate=0.5,  # 50% timeouts
-    write_failure_rate=0.0,    # No write failures
-    corruption_rate=0.0,       # No corruption
-)
-```
-
-## Next Steps
-
-- [ ] Run baseline experiments
-- [ ] Compare results across failure rates
-- [ ] Add more failure modes (rate limiting, permission denied, etc.)
-- [ ] Test with multiple models
-- [ ] Test on SWE-bench tasks
+- **Quick Guide**: See `EXPERIMENT_GUIDE.md` in project root
+- **Detailed Setup**: `experiments/docs/GPT5_EXPERIMENT_GUIDE.md`
+- **Architecture**: See tool injection framework in `src/impossiblebench/`
