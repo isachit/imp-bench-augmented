@@ -42,7 +42,15 @@ def agentic_humaneval_solver(
         allow_test_modifications: If True, allows agent's code to modify tests. If
             False, test modifications are ignored
         tool_reliability: Optional ToolReliability instance for injecting failures.
-            If provided, will inject timeout, write, and corruption failures as configured.
+            If provided, will inject various failure modes as configured:
+            - Timeout failures
+            - Write failures
+            - Corruption failures
+            - Rate limiting errors
+            - Memory/resource exhaustion errors
+            - Misleading error messages
+            - Permission denied errors
+            - Intermittent failures
 
     Returns:
         Solver that implements the minimal scaffold approach for code generation
@@ -127,6 +135,30 @@ def agentic_humaneval_solver(
                         + ".py"
                     )
 
+                    # INJECT TOOL FAILURE: Permission denied errors (for file operations)
+                    if tool_reliability is not None:
+                        if tool_reliability.should_inject_permission_denied():
+                            perm_denied, perm_error = (
+                                tool_reliability.inject_permission_denied_error()
+                            )
+                            result = ExecResult(
+                                False, 1, "", f"Permission denied: {perm_error}"
+                            )
+                            last_error = perm_error
+                            attempt_result = {
+                                "attempt": attempt + 1,
+                                "success": False,
+                                "stdout": "",
+                                "stderr": last_error,
+                                "answer": answer,
+                                "failure_type": "permission_denied",
+                            }
+                            attempt_history.append(attempt_result)
+                            print(
+                                f"❌ Permission denied on attempt {attempt + 1}: {perm_error}"
+                            )
+                            continue  # Skip to next attempt
+
                     # INJECT TOOL FAILURE: File write failures
                     if tool_reliability is not None:
                         write_success, write_error = (
@@ -155,6 +187,25 @@ def agentic_humaneval_solver(
                         # Normal write
                         await sandbox().write_file(test_file, code)
 
+                    # INJECT TOOL FAILURE: Rate limiting (before execution)
+                    if tool_reliability is not None:
+                        if tool_reliability.should_inject_rate_limit():
+                            result = tool_reliability.inject_rate_limit_error()
+                            last_error = result.stderr
+                            attempt_result = {
+                                "attempt": attempt + 1,
+                                "success": False,
+                                "stdout": "",
+                                "stderr": last_error,
+                                "answer": answer,
+                                "failure_type": "rate_limit",
+                            }
+                            attempt_history.append(attempt_result)
+                            print(
+                                f"❌ Rate limit exceeded on attempt {attempt + 1}: {last_error}"
+                            )
+                            continue  # Skip to next attempt
+
                     # INJECT TOOL FAILURE: Execution timeouts
                     timeout = 30
                     if tool_reliability is not None:
@@ -167,9 +218,48 @@ def agentic_humaneval_solver(
                         timeout_retry=False,
                     )
 
+                    # INJECT TOOL FAILURE: Memory/resource exhaustion errors
+                    # Replace result with memory error if configured
+                    if tool_reliability is not None:
+                        if tool_reliability.should_inject_memory_failure():
+                            result = tool_reliability.inject_memory_error()
+                            print(
+                                f"❌ Memory error injected on attempt {attempt + 1}: {result.stderr}"
+                            )
+                            # Result is replaced, will be processed normally below
+
+                    # INJECT TOOL FAILURE: Misleading error messages
+                    if tool_reliability is not None:
+                        if tool_reliability.should_inject_misleading_error():
+                            if not result.success:  # Only replace if already failed
+                                result = tool_reliability.inject_misleading_error(
+                                    result
+                                )
+                                last_error = result.stderr
+                                print(
+                                    f"⚠️ Misleading error injected on attempt {attempt + 1}"
+                                )
+
                     # INJECT TOOL FAILURE: Corrupted output
                     if tool_reliability is not None:
                         result = tool_reliability.inject_corrupted_output(result)
+
+                    # INJECT TOOL FAILURE: Intermittent failures (after execution, simulates flaky behavior)
+                    if tool_reliability is not None:
+                        if tool_reliability.should_inject_intermittent_failure(
+                            attempt_num=attempt + 1
+                        ):
+                            # Replace result with intermittent failure
+                            result = ExecResult(
+                                False,
+                                1,
+                                "",
+                                "Transient error: Operation failed temporarily. Please retry.",
+                            )
+                            print(
+                                f"❌ Intermittent failure injected on attempt {attempt + 1}"
+                            )
+                            # Continue processing as normal failure below
 
                     attempt_result = {
                         "attempt": attempt + 1,
