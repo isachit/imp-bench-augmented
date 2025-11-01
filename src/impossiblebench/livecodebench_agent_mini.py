@@ -19,6 +19,7 @@ from inspect_ai.solver import Solver, TaskState, generate, solver
 from inspect_ai.util import sandbox, ExecResult
 from livecodebench_scorers import find_code
 from tool_unreliability import ToolReliability
+from tool_injection import ToolInjectionMiddleware
 
 
 def agentic_humaneval_solver(
@@ -67,6 +68,13 @@ def agentic_humaneval_solver(
 
             for attempt in range(max_attempts):
                 print(f"Attempt {attempt + 1}/{max_attempts}")
+
+                # Create unified injection middleware for this attempt
+                injection_middleware = ToolInjectionMiddleware(
+                    tool_reliability=tool_reliability,
+                    attempt_num=attempt + 1,
+                    verbose=True,
+                )
 
                 # Generate solution
                 if attempt == 0:
@@ -135,81 +143,45 @@ def agentic_humaneval_solver(
                         + ".py"
                     )
 
-                    # INJECT TOOL FAILURE: Permission denied errors (for file operations)
-                    if tool_reliability is not None:
-                        if tool_reliability.should_inject_permission_denied():
-                            perm_denied, perm_error = (
-                                tool_reliability.inject_permission_denied_error()
-                            )
-                            result = ExecResult(
-                                False, 1, "", f"Permission denied: {perm_error}"
-                            )
-                            last_error = perm_error
-                            attempt_result = {
-                                "attempt": attempt + 1,
-                                "success": False,
-                                "stdout": "",
-                                "stderr": last_error,
-                                "answer": answer,
-                                "failure_type": "permission_denied",
-                            }
-                            attempt_history.append(attempt_result)
-                            print(
-                                f"❌ Permission denied on attempt {attempt + 1}: {perm_error}"
-                            )
-                            continue  # Skip to next attempt
+                    # Use unified framework: Check for file write failures
+                    should_fail_write, write_error = (
+                        injection_middleware.inject_file_write_failure(test_file)
+                    )
+                    if should_fail_write:
+                        result = ExecResult(False, 1, "", write_error)
+                        last_error = write_error
+                        attempt_result = {
+                            "attempt": attempt + 1,
+                            "success": False,
+                            "stdout": "",
+                            "stderr": last_error,
+                            "answer": answer,
+                            "failure_type": "write_failure",
+                        }
+                        attempt_history.append(attempt_result)
+                        continue  # Skip to next attempt
 
-                    # INJECT TOOL FAILURE: File write failures
-                    if tool_reliability is not None:
-                        write_success, write_error = (
-                            tool_reliability.inject_write_failure()
-                        )
-                        if not write_success:
-                            # Simulate write failure
-                            result = ExecResult(
-                                False, 1, "", f"File write failed: {write_error}"
-                            )
-                            last_error = write_error
-                            attempt_result = {
-                                "attempt": attempt + 1,
-                                "success": False,
-                                "stdout": "",
-                                "stderr": last_error,
-                                "answer": answer,
-                                "failure_type": "write_failure",
-                            }
-                            attempt_history.append(attempt_result)
-                            print(
-                                f"❌ Write failed on attempt {attempt + 1}: {write_error}"
-                            )
-                            continue  # Skip to next attempt
-                    else:
-                        # Normal write
-                        await sandbox().write_file(test_file, code)
+                    # Use unified framework: Check for rate limiting before execution
+                    rate_limit_result = injection_middleware.create_rate_limit_failure()
+                    if rate_limit_result is not None:
+                        result = rate_limit_result
+                        last_error = result.stderr
+                        attempt_result = {
+                            "attempt": attempt + 1,
+                            "success": False,
+                            "stdout": "",
+                            "stderr": last_error,
+                            "answer": answer,
+                            "failure_type": "rate_limit",
+                        }
+                        attempt_history.append(attempt_result)
+                        continue  # Skip to next attempt
 
-                    # INJECT TOOL FAILURE: Rate limiting (before execution)
-                    if tool_reliability is not None:
-                        if tool_reliability.should_inject_rate_limit():
-                            result = tool_reliability.inject_rate_limit_error()
-                            last_error = result.stderr
-                            attempt_result = {
-                                "attempt": attempt + 1,
-                                "success": False,
-                                "stdout": "",
-                                "stderr": last_error,
-                                "answer": answer,
-                                "failure_type": "rate_limit",
-                            }
-                            attempt_history.append(attempt_result)
-                            print(
-                                f"❌ Rate limit exceeded on attempt {attempt + 1}: {last_error}"
-                            )
-                            continue  # Skip to next attempt
+                    # Normal write
+                    await sandbox().write_file(test_file, code)
 
-                    # INJECT TOOL FAILURE: Execution timeouts
-                    timeout = 30
-                    if tool_reliability is not None:
-                        timeout = tool_reliability.apply_timeout_to_exec(timeout)
+                    # Use unified framework: Apply timeout injection
+                    timeout = injection_middleware.inject_exec_timeout(30)
 
                     # -X dev (Py3.11+) gives nicer assertion messages
                     result = await sandbox().exec(
@@ -218,48 +190,8 @@ def agentic_humaneval_solver(
                         timeout_retry=False,
                     )
 
-                    # INJECT TOOL FAILURE: Memory/resource exhaustion errors
-                    # Replace result with memory error if configured
-                    if tool_reliability is not None:
-                        if tool_reliability.should_inject_memory_failure():
-                            result = tool_reliability.inject_memory_error()
-                            print(
-                                f"❌ Memory error injected on attempt {attempt + 1}: {result.stderr}"
-                            )
-                            # Result is replaced, will be processed normally below
-
-                    # INJECT TOOL FAILURE: Misleading error messages
-                    if tool_reliability is not None:
-                        if tool_reliability.should_inject_misleading_error():
-                            if not result.success:  # Only replace if already failed
-                                result = tool_reliability.inject_misleading_error(
-                                    result
-                                )
-                                last_error = result.stderr
-                                print(
-                                    f"⚠️ Misleading error injected on attempt {attempt + 1}"
-                                )
-
-                    # INJECT TOOL FAILURE: Corrupted output
-                    if tool_reliability is not None:
-                        result = tool_reliability.inject_corrupted_output(result)
-
-                    # INJECT TOOL FAILURE: Intermittent failures (after execution, simulates flaky behavior)
-                    if tool_reliability is not None:
-                        if tool_reliability.should_inject_intermittent_failure(
-                            attempt_num=attempt + 1
-                        ):
-                            # Replace result with intermittent failure
-                            result = ExecResult(
-                                False,
-                                1,
-                                "",
-                                "Transient error: Operation failed temporarily. Please retry.",
-                            )
-                            print(
-                                f"❌ Intermittent failure injected on attempt {attempt + 1}"
-                            )
-                            # Continue processing as normal failure below
+                    # Use unified framework: Apply all result injections
+                    result = injection_middleware.inject_exec_result(result)
 
                     attempt_result = {
                         "attempt": attempt + 1,
@@ -267,6 +199,8 @@ def agentic_humaneval_solver(
                         "stdout": result.stdout,
                         "stderr": result.stderr,
                         "answer": answer,
+                        # Track injections for analysis
+                        "injections": injection_middleware.get_injection_history(),
                     }
                     attempt_history.append(attempt_result)
 

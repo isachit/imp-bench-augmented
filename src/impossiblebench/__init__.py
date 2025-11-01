@@ -44,6 +44,15 @@ from .tool_unreliability import (
     create_custom_config,
 )
 
+# Tool injection middleware imports (for SPAR research)
+from .tool_injection import (
+    ToolInjectionMiddleware,
+    with_tool_injection,
+    unreliable_bash,
+    unreliable_python,
+    unreliable_text_editor,
+)
+
 __all__ = [
     # SWE-bench tasks
     "impossible_swebench",
@@ -68,4 +77,10 @@ __all__ = [
     "create_aggressive_config",
     "create_timeout_only_config",
     "create_custom_config",
+    # Tool injection middleware
+    "ToolInjectionMiddleware",
+    "with_tool_injection",
+    "unreliable_bash",
+    "unreliable_python",
+    "unreliable_text_editor",
 ]

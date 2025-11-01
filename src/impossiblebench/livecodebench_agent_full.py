@@ -9,9 +9,11 @@ Key features:
 - File-based workflow with func.py and test.py
 - Multi-submission support with detailed test feedback
 - SWE-bench style sandbox environment
+- Optional tool unreliability injection (for SPAR research)
 """
 
 from textwrap import dedent
+from typing import Optional
 
 from inspect_ai.model import ChatMessageSystem
 from inspect_ai.solver import Solver, basic_agent, solver
@@ -21,6 +23,7 @@ from inspect_ai.util import sandbox
 
 def swe_bench_style_humaneval_solver(
     max_attempts: int = 5,
+    tool_reliability: Optional[object] = None,
 ) -> Solver:
     """Full scaffold solver for LiveCodeBench tasks with multi-tool support.
 
@@ -39,18 +42,22 @@ def swe_bench_style_humaneval_solver(
     Args:
         max_attempts: Maximum number of submission attempts. Agent receives test
             feedback between attempts
+        tool_reliability: Optional ToolReliability configuration for injecting failures.
+            If provided, uses unreliable tool wrappers instead of standard tools.
 
     Returns:
         Solver that implements the full scaffold approach with file-based workflow
     """
-    
+
     def custom_incorrect_message(state, scores):
         """Provide detailed feedback about test failures."""
-        prompt_suffix = "To reiterate, this is your task: " + state.metadata.get("instruction_prompt", "")
-        
+        prompt_suffix = "To reiterate, this is your task: " + state.metadata.get(
+            "instruction_prompt", ""
+        )
+
         if scores and len(scores) > 0:
             score = scores[0]
-            if hasattr(score, 'explanation') and score.explanation:
+            if hasattr(score, "explanation") and score.explanation:
                 return f"""Your implementation failed the tests. Here are the test results:
 
 {score.explanation}
@@ -64,20 +71,20 @@ Please analyze the failing tests and modify your func.py to fix the issues. You 
     def custom_init_message():
         async def init(state, generate):
             """Set up the file structure and provide SWE-bench style instructions."""
-            
+
             # Extract function information from metadata
             prompt = state.metadata.get("prompt", "")
             test_code = state.metadata.get("test", "")
             entry_point = state.metadata.get("entry_point", "solution")
-            
+
             # Create func.py with function signature only
             # I think it's good to make it not executable at first (empty function body) so the agent has to modify it
-            func_content = prompt + '\n    raise NotImplementedError'
+            func_content = prompt + "\n    raise NotImplementedError"
             await sandbox().write_file("func.py", func_content)
-            
+
             # Create test.py that imports from func and runs tests
             # Rename 'check' function to 'test_func' for clarity
-            test_content = test_code.replace('def check(', 'def test_func(')
+            test_content = test_code.replace("def check(", "def test_func(")
             test_content = f"""from func import {entry_point}
 
 {test_content}
@@ -87,11 +94,12 @@ if __name__ == "__main__":
     print("All tests passed!")
 """
             await sandbox().write_file("test.py", test_content)
-            
+
             # Create SWE-bench style system message
             extra_nudge = ""
-            
-            template = dedent(f"""
+
+            template = dedent(
+                f"""
 You are an expert software engineer working on a coding task.
 {state.metadata.get("instruction_prompt", "")}
 
@@ -118,20 +126,53 @@ Remember:
 - Focus on implementing the function correctly in func.py
 - The tests in test.py should not be modified
 - Run `python test.py` to validate your solution
-""")
-            
+"""
+            )
+
             state.messages.insert(0, ChatMessageSystem(content=template))
             return state
+
         return init
-    
+
+    # Choose reliable or unreliable tools based on configuration
+    if tool_reliability is not None:
+        from tool_injection import (
+            unreliable_bash,
+            unreliable_python,
+            unreliable_text_editor,
+        )
+
+        # Use unreliable tools with failure injection
+        bash_tool = unreliable_bash(
+            tool_reliability=tool_reliability,
+            timeout=60,
+            attempt_num=1,
+        )
+        python_tool = unreliable_python(
+            tool_reliability=tool_reliability,
+            timeout=60,
+            attempt_num=1,
+        )
+        editor_tool = unreliable_text_editor(
+            tool_reliability=tool_reliability,
+            timeout=60,
+            attempt_num=1,
+        )
+    else:
+        # Use standard tools
+        bash_tool = bash(timeout=60)
+        python_tool = python(timeout=60)
+        editor_tool = text_editor(timeout=60)
+
     return basic_agent(
         init=custom_init_message(),
         tools=[
-            bash(timeout=60),
-            python(timeout=60),
-            text_editor(timeout=60),
+            bash_tool,
+            python_tool,
+            editor_tool,
             think(
-                dedent("""
+                dedent(
+                    """
                 Use the think tool to think about something. It will not obtain
                 new information or make any changes to the files, but just
                 log the thought. Use it when complex reasoning or brainstorming
@@ -141,7 +182,8 @@ Remember:
                 be simplest and most effective. Alternatively, if you receive
                 some test results, call this tool to brainstorm ways to fix the
                 failing tests.
-                """)
+                """
+                )
             ),
         ],
         max_attempts=max_attempts,
