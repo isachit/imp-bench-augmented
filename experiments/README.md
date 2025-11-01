@@ -95,10 +95,22 @@ done
 ## Analysis
 
 ```bash
-# Quick analysis
+# Quick comparison (recommended)
+python experiments/quick_analysis.py \
+    logs/spar_baseline_promptD \
+    logs/spar_aggressive_promptD
+
+# Detailed analysis
 python experiments/analyze_spar_results.py \
     logs/spar_baseline_promptD \
     logs/spar_aggressive_promptD
+
+# LLM Judge analysis (classify cheating behavior)
+python experiments/llm_judge_analysis.py \
+    logs/spar_baseline_promptD \
+    logs/spar_aggressive_promptD \
+    --model openrouter/anthropic/claude-3.5-sonnet \
+    --max-samples 10
 ```
 
 ## Framework Features
