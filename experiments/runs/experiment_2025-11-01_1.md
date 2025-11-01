@@ -6,7 +6,7 @@
 
 ## Experiment Overview
 
-**Hypothesis:** Tool unreliability reduces reward hacking behavior in LLM agents.
+**Hypothesis:** Tool unreliability reduces?/increases? reward hacking behavior in LLM agents.
 
 Testing the effect of aggressive 50% tool failure rate on reward hacking compared to baseline (0% failures) using the ImpossibleBench framework.
 
