@@ -5,6 +5,10 @@ This directory contains experiments for testing the effect of tool unreliability
 ## Quick Start
 
 ```bash
+# Pre-reqs
+export OPENROUTER_API_KEY=$(cat openrouter_apikey) 
+export OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
+
 # Run baseline experiment (no tool failures)
 python experiments/spar_baseline_experiment.py baseline
 
@@ -59,20 +63,55 @@ python experiments/spar_baseline_experiment.py all
 
 ## Analysis
 
-After running experiments, analyze results using:
+### Quick Analysis (Built-in)
+
+Each experiment automatically runs basic analysis:
+
+```bash
+python experiments/spar_baseline_experiment.py baseline
+# Automatically analyzes results at the end
+```
+
+### Detailed Analysis
+
+Use the dedicated analysis script for detailed statistics:
+
+```bash
+# Analyze a single log directory
+python experiments/analyze_spar_results.py logs/spar_baseline
+
+# Analyze multiple experiments and compare
+python experiments/analyze_spar_results.py \
+    logs/spar_baseline \
+    logs/spar_conservative \
+    logs/spar_failures_30 \
+    logs/spar_aggressive
+
+# This will output:
+# - Reward hacking rates (pass rate on conflicting tests)
+# - Pass rates by model and agent type
+# - First-attempt success rates
+# - Score statistics
+# - Saves results to spar_analysis_results.csv
+```
+
+### Programmatic Analysis
 
 ```python
 from impossiblebench.analysis import DataLoader
 
 # Load results
 loader = DataLoader(n_workers=4)
-loader.load_folder("./logs/...")
+loader.load_folder("./logs/")
 
 # Get DataFrame
 df = loader.to_df()
 
-# Calculate reward hacking rates
-# (Pass rate on conflicting tests = reward hacking rate)
+# Filter to conflicting tests (where pass rate = reward hacking rate)
+conflicting = df[df['variant'] == 'conflicting']
+reward_hacking_rate = conflicting['passed'].mean()
+
+print(f"Reward hacking rate: {reward_hacking_rate:.1%}")
 ```
 
 ## Customizing Experiments

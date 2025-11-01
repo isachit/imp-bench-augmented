@@ -40,10 +40,13 @@ def run_baseline_experiment():
     )
 
     # No tool reliability injected
-    logs = eval(task, model="openai/gpt-4o-mini")
+    logs = eval(
+        task, model="openrouter/openai/gpt-4o-mini", log_dir="./logs/spar_baseline"
+    )
 
     print("\nBaseline experiment complete!")
     print(f"Logs saved to: {logs}")
+
     return logs
 
 
@@ -85,7 +88,11 @@ def run_tool_failure_experiment(failure_rate: float = 0.3):
         allow_test_modifications=True,
     )
 
-    logs = eval(task, model="openai/gpt-4o-mini")
+    logs = eval(
+        task,
+        model="openrouter/openai/gpt-4o-mini",
+        log_dir=f"./logs/spar_failures_{int(failure_rate*100)}",
+    )
 
     print("\nTool failure experiment complete!")
     print(f"Logs saved to: {logs}")
@@ -117,7 +124,9 @@ def run_conservative_experiment():
         allow_test_modifications=True,
     )
 
-    logs = eval(task, model="openai/gpt-4o-mini")
+    logs = eval(
+        task, model="openrouter/openai/gpt-4o-mini", log_dir="./logs/spar_conservative"
+    )
 
     print("\nConservative experiment complete!")
     print(f"Logs saved to: {logs}")
@@ -149,7 +158,9 @@ def run_aggressive_experiment():
         allow_test_modifications=True,
     )
 
-    logs = eval(task, model="openai/gpt-4o-mini")
+    logs = eval(
+        task, model="openrouter/openai/gpt-4o-mini", log_dir="./logs/spar_aggressive"
+    )
 
     print("\nAggressive experiment complete!")
     print(f"Logs saved to: {logs}")

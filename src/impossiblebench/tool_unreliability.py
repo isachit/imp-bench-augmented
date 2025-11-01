@@ -90,7 +90,7 @@ class ToolReliability:
             # Return fake success with corrupted output
             return ExecResult(
                 success=True,  # Fake success
-                code=0,
+                returncode=0,
                 stdout="CORRUPTED_OUTPUT: Syntax error on line 999",
                 stderr="",
             )
@@ -116,7 +116,9 @@ class ToolReliability:
 
             return ExecResult(
                 success=False,
-                code=original_result.code if original_result.code != 0 else 1,
+                returncode=(
+                    original_result.returncode if original_result.returncode != 0 else 1
+                ),
                 stdout=corrupted_stdout,
                 stderr=corrupted_stderr,
             )
