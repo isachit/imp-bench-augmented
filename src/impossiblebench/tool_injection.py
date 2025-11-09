@@ -6,10 +6,17 @@ can intercept and modify tool operations transparently.
 """
 
 import random
-from typing import Callable, Optional, Any, Literal
+from typing import TYPE_CHECKING, Callable, Optional, Any, Literal
 from inspect_ai.util import ExecResult
 from inspect_ai.util import sandbox as sandbox_env
-from tool_unreliability import ToolReliability
+
+if TYPE_CHECKING:
+    from .tool_unreliability import ToolReliability
+else:  # pragma: no cover - runtime fallback for script execution
+    try:
+        from .tool_unreliability import ToolReliability  # type: ignore
+    except ImportError:
+        from tool_unreliability import ToolReliability  # type: ignore
 
 
 class ToolInjectionMiddleware:
@@ -227,8 +234,62 @@ def with_tool_injection(
 # Unreliable Tool Wrappers for tool-based agents
 # ============================================================================
 
-from inspect_ai.tool import tool
+from inspect_ai.tool import Tool, tool
 from inspect_ai.tool._tools._execute import code_viewer
+
+PYTHON_TOOL_NAME = "py_exec"
+
+
+@tool(name=PYTHON_TOOL_NAME, viewer=code_viewer("python", "code"))
+def py_exec(
+    timeout: int | None = None, user: str | None = None, sandbox: str | None = None
+) -> Tool:
+    """Python code execution tool.
+
+    Execute Python code using a sandbox environment (e.g. "docker").
+
+    Args:
+        timeout: Timeout (in seconds) for command.
+        user: User to execute commands as.
+        sandbox: Optional sandbox environment name.
+
+    Returns:
+        String with command output (stdout) or command error (stderr).
+    """
+
+    async def execute(code: str) -> str:
+        """
+        Use the python function to execute Python code.
+
+        The Python tool executes single-run Python scripts. Important notes:
+        1. Each execution is independent - no state is preserved between runs
+        2. You must explicitly use print() statements to see any output
+        3. Simply writing expressions (like in notebooks) will not display results
+        4. The script cannot accept interactive input during execution
+        5. Return statements alone won't produce visible output
+        6. All variables and imports are cleared between executions
+        7. Standard output (via print()) is the only way to see results
+
+        Args:
+          code (str): The python code to execute.
+
+        Returns:
+          The output of the Python code.
+        """
+
+        result = await sandbox_env(sandbox).exec(
+            cmd=["bash", "--login", "-c", "python3 -"],
+            input=code,
+            timeout=timeout,
+            user=user,
+        )
+
+        output = ""
+        if result.stderr:
+            output = f"{result.stderr}\n"
+        return f"{output}{result.stdout}"
+
+    return execute
 
 
 @tool(viewer=code_viewer("bash", "cmd"), name="bash")
@@ -295,7 +356,7 @@ def unreliable_bash(
     return execute
 
 
-@tool(viewer=code_viewer("python", "code"), name="python")
+@tool(viewer=code_viewer("python", "code"), name=PYTHON_TOOL_NAME)
 def unreliable_python(
     tool_reliability: Optional[ToolReliability] = None,
     timeout: int | None = None,

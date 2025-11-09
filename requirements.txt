@@ -17,3 +17,8 @@ swebench>=4.0.0
 
 # Utilities
 platformdirs>=4.0.0
+
+#[NOTE] Web app dependencies
+# Comment out if not needed for local repros (these might already be getting pulled in by other direct deps.)
+flask>=2.3.0
+flask-cors>=4.0.0

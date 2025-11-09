@@ -51,6 +51,8 @@ from .tool_injection import (
     unreliable_bash,
     unreliable_python,
     unreliable_text_editor,
+    py_exec,
+    PYTHON_TOOL_NAME,
 )
 
 __all__ = [
@@ -83,4 +85,6 @@ __all__ = [
     "unreliable_bash",
     "unreliable_python",
     "unreliable_text_editor",
+    "py_exec",
+    "PYTHON_TOOL_NAME",
 ]
