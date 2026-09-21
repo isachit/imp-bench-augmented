@@ -3,7 +3,10 @@
 import os
 import json
 import re
+import atexit
+import threading
 import pandas as pd
+from io import StringIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -16,38 +19,84 @@ except ImportError:
     print("Warning: inspect_ai not available. Install with: pip install inspect-ai")
     read_eval_log = None
 
+try:
+    from inspect_ai.model._chat_message import (
+        ChatMessageSystem,
+        ChatMessageUser,
+        ChatMessageAssistant,
+        ChatMessageTool,
+    )
+    from inspect_ai._util.content import ContentText, ContentReasoning
+except ImportError:  # pragma: no cover - optional dependency
+    ChatMessageSystem = ChatMessageUser = ChatMessageAssistant = ChatMessageTool = None  # type: ignore
+    ContentText = ContentReasoning = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
+_EXECUTOR: Optional[ProcessPoolExecutor] = None
+_EXECUTOR_MAX_WORKERS: Optional[int] = None
+_EXECUTOR_LOCK = threading.Lock()
+
+
+def _shutdown_executor() -> None:
+    global _EXECUTOR
+    if _EXECUTOR is not None:
+        _EXECUTOR.shutdown(wait=False)
+        _EXECUTOR = None
+
+
+def _get_executor(max_workers: int) -> ProcessPoolExecutor:
+    global _EXECUTOR, _EXECUTOR_MAX_WORKERS
+    with _EXECUTOR_LOCK:
+        if _EXECUTOR is None or _EXECUTOR_MAX_WORKERS != max_workers:
+            if _EXECUTOR is not None:
+                _EXECUTOR.shutdown(wait=False)
+            _EXECUTOR = ProcessPoolExecutor(max_workers=max_workers)
+            _EXECUTOR_MAX_WORKERS = max_workers
+    return _EXECUTOR  # type: ignore[return-value]
+
+
+atexit.register(_shutdown_executor)
+
+
 def get_dump_of_everything(s):
-    from inspect_ai.model._chat_message import ChatMessageSystem, ChatMessageUser, ChatMessageAssistant, ChatMessageTool
-    from inspect_ai._util.content import ContentText, ContentReasoning
-    dump_of_everything = ''
+    if ChatMessageSystem is None:
+        raise ImportError(
+            "inspect_ai is required to generate message dumps. Install with: pip install inspect-ai"
+        )
+
+    buffer = StringIO()
     for msg in s.messages:
         content = msg.content
-        tool_calls = getattr(msg, 'tool_calls', [])
+        tool_calls = getattr(msg, "tool_calls", []) or []
+
         if isinstance(msg, ChatMessageSystem):
-            dump_of_everything+='**SYSTEM MESSAGE:**\n'
+            buffer.write("**SYSTEM MESSAGE:**\n")
         elif isinstance(msg, ChatMessageUser):
-            dump_of_everything+='**USER MESSAGE:**\n'
+            buffer.write("**USER MESSAGE:**\n")
         elif isinstance(msg, ChatMessageAssistant):
-            dump_of_everything+='**ASSISTANT MESSAGE:**\n'
+            buffer.write("**ASSISTANT MESSAGE:**\n")
         elif isinstance(msg, ChatMessageTool):
-            dump_of_everything+='**TOOL OUTPUT:**\n'
+            buffer.write("**TOOL OUTPUT:**\n")
         else:
             raise ValueError(f"Unknown message type: {type(msg)}")
+
         if not isinstance(content, list):
             content = [content]
+
         for c in content:
-            if isinstance(c, ContentText):
-                dump_of_everything+=c.text+'\n'
-            elif isinstance(c, str):
-                dump_of_everything+=c+'\n'
-        if tool_calls is None:
-            tool_calls = []
+            if ContentText is not None and isinstance(c, ContentText):
+                buffer.write(f"{c.text}\n")
+            elif ContentReasoning is not None and isinstance(c, ContentReasoning):
+                buffer.write(f"{c.reasoning}\n")
+            else:
+                buffer.write(f"{c}\n")
+
         for tool_call in tool_calls:
-            dump_of_everything+=f'[TOOL CALL: {tool_call.function}, ARGS: {tool_call.arguments}]\n'
-        dump_of_everything+='\n\n'
-    return dump_of_everything
+            buffer.write(f"[TOOL CALL: {tool_call.function}, ARGS: {tool_call.arguments}]\n")
+        buffer.write("\n\n")
+
+    return buffer.getvalue()
 
 
 @dataclass
@@ -370,21 +419,30 @@ class DataLoader:
             return self
         
         logger.info(f"Loading {len(eval_files)} files from {folder_path}")
-        # Process files in parallel
-        with ProcessPoolExecutor(max_workers=self.n_workers) as executor:
-            futures = {executor.submit(parse_eval_file, str(f)): f for f in eval_files}
-            
-            if show_progress:
-                from tqdm import tqdm
-                futures_iter = tqdm(as_completed(futures), total=len(futures), desc="Loading files")
-            else:
-                futures_iter = as_completed(futures)
-                
-            for future in futures_iter:
-                file_results = future.result()  # This returns a list of EvalResult
-                if file_results:  # file_results is a list
-                    self.results.extend(file_results)
-        
+        # Process files in parallel using shared executor
+        executor = _get_executor(self.n_workers)
+        futures = {executor.submit(parse_eval_file, str(f)): f for f in eval_files}
+
+        futures_iter = as_completed(futures)
+        if show_progress:
+            from tqdm import tqdm
+
+            futures_iter = tqdm(
+                futures_iter, total=len(futures), desc="Loading files"
+            )
+
+        for future in futures_iter:
+            source_file = futures[future]
+            try:
+                file_results = future.result()
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error(
+                    "Failed to parse %s: %s", source_file, exc, exc_info=True
+                )
+                continue
+            if file_results:
+                self.results.extend(file_results)
+
         logger.info(f"Successfully loaded {len(self.results)} evaluation results")
         return self
     
@@ -493,3 +551,8 @@ class DataLoader:
         new_loader = DataLoader(self.n_workers)
         new_loader.results = filtered_results
         return new_loader
+
+    def close(self) -> None:
+        """Release shared resources used for parallel loading."""
+        _shutdown_executor()
+        return None

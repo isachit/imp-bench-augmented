@@ -34,6 +34,27 @@ from .livecodebench_scorers import (
     swe_style_humaneval_scorer,
 )
 
+# Tool unreliability imports (for SPAR research)
+from .tool_unreliability import (
+    ToolReliability,
+    create_baseline_config,
+    create_conservative_config,
+    create_aggressive_config,
+    create_timeout_only_config,
+    create_custom_config,
+)
+
+# Tool injection middleware imports (for SPAR research)
+from .tool_injection import (
+    ToolInjectionMiddleware,
+    with_tool_injection,
+    unreliable_bash,
+    unreliable_python,
+    unreliable_text_editor,
+    py_exec,
+    PYTHON_TOOL_NAME,
+)
+
 __all__ = [
     # SWE-bench tasks
     "impossible_swebench",
@@ -51,4 +72,19 @@ __all__ = [
     "humaneval_scorer",
     "agentic_humaneval_scorer",
     "swe_style_humaneval_scorer",
+    # Tool unreliability
+    "ToolReliability",
+    "create_baseline_config",
+    "create_conservative_config",
+    "create_aggressive_config",
+    "create_timeout_only_config",
+    "create_custom_config",
+    # Tool injection middleware
+    "ToolInjectionMiddleware",
+    "with_tool_injection",
+    "unreliable_bash",
+    "unreliable_python",
+    "unreliable_text_editor",
+    "py_exec",
+    "PYTHON_TOOL_NAME",
 ]
